@@ -1,0 +1,25 @@
+# This file lists the Python packages required to run the BIOne OPC Data Logger.
+#
+# To install all the required packages, run the following command in your terminal
+# from the same directory as this file:
+#
+# pip install -r requirements.txt
+#
+
+# For the OPC UA client communication
+opcua==0.99.11
+
+# The core GUI framework (a modern alternative to PyQt)
+PySide6==6.7.0
+
+# High-performance plotting library that integrates with PySide6
+pyqtgraph==0.13.3
+
+# Powerful data analysis and manipulation library, used for data export
+pandas==2.2.2
+
+# Required by pandas to write to .xlsx Excel files
+openpyxl==3.1.2
+
+# A fundamental package for scientific computing, required by pandas and pyqtgraph
+numpy==1.26.4

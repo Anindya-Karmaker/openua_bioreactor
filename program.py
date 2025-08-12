@@ -41,7 +41,7 @@ def log_event(message):
 
 
 # #############################################################################
-# CORE LOGIC - CONFIGURATION, DATABASE, OPC THREAD
+# CORE LOGIC - CONFIGURATION and DATABASE (with bulk insert)
 # #############################################################################
 
 class ConfigManager:
@@ -59,22 +59,9 @@ class ConfigManager:
 
     def _get_default_config(self):
         default_parser = configparser.ConfigParser()
-        default_parser['OPC_SERVER'] = {'address': 'opc.tcp://ws-1316:62882/Distek/BIOne'}
+        default_parser['OPC_SERVER'] = {'address': 'opc.tcp://localhost:4840/freeopcua/server/'}
         default_parser['SETTINGS'] = {'polling_interval_ms': '1000'}
-        default_parser['TAGS'] = {
-            'run_start_nodeid': 'ns=2;s=BIONE_1.VSL_1.RUN.START',
-            'run_time_nodeid': 'ns=2;s=BIONE_1.VSL_1.RUN.ELAPSED',
-            'ph_name': 'pH', 'ph_nodeid': 'ns=2;s=BIONE_1.VSL_1.PH.ACTIVE_PV', 'ph_setpoint_nodeid': 'ns=2;s=BIONE_1.VSL_1.PH.SP',
-            'do_name': 'DO', 'do_nodeid': 'ns=2;s=BIONE_1.VSL_1.DO.ACTIVE_PV', 'do_setpoint_nodeid': 'ns=2;s=BIONE_1.VSL_1.DO.SP',
-            'temp_name': 'Temperature', 'temp_nodeid': 'ns=2;s=BIONE_1.VSL_1.TEMP.ACTIVE_PV', 'temp_setpoint_nodeid': 'ns=2;s=BIONE_1.VSL_1.TEMP.SP',
-            'variable1_name': 'Pump 1 Output', 'variable1_nodeid': 'ns=2;s=BIONE_1.VSL_1.PUMP1.OUTPUT',
-            'variable2_name': 'Pump 2 Output', 'variable2_nodeid': 'ns=2;s=BIONE_1.VSL_1.PUMP2.OUTPUT',
-            'variable3_name': 'Pump 3 Output', 'variable3_nodeid': 'ns=2;s=BIONE_1.VSL_1.PUMP3.OUTPUT',
-            'variable4_name': 'Pump 4 Output', 'variable4_nodeid': 'ns=2;s=BIONE_1.VSL_1.PUMP4.OUTPUT',
-            'variable5_name': 'Agitation', 'variable5_nodeid': 'ns=2;s=BIONE_1.VSL_1.AGITATION.ACTIVE_PV',
-            'variable6_name': 'Air Flow', 'variable6_nodeid': 'ns=2;s=BIONE_1.VSL_1.GAS_FLOW_AIR.ACTIVE_PV',
-            'variable7_name': 'O2 Flow', 'variable7_nodeid': 'ns=2;s=BIONE_1.VSL_1.GAS_FLOW_O2.ACTIVE_PV'
-        }
+        default_parser['TAGS'] = {'ph_name': 'pH', 'ph_nodeid': 'ns=2;i=2', 'ph_setpoint_nodeid': 'ns=2;i=10', 'do_name': 'DO', 'do_nodeid': 'ns=2;i=3', 'do_setpoint_nodeid': 'ns=2;i=11', 'temp_name': 'Temperature', 'temp_nodeid': 'ns=2;i=4', 'temp_setpoint_nodeid': 'ns=2;i=12', 'variable1_name': 'Variable 1', 'variable1_nodeid': 'ns=2;i=5', 'variable2_name': 'Variable 2', 'variable2_nodeid': 'ns=2;i=6', 'variable3_name': 'Variable 3', 'variable3_nodeid': 'ns=2;i=7', 'variable4_name': 'Variable 4', 'variable4_nodeid': 'ns=2;i=8', 'variable5_name': 'Variable 5', 'variable5_nodeid': 'ns=2;i=13', 'variable6_name': 'Variable 6', 'variable6_nodeid': 'ns=2;i=14', 'variable7_name': 'Variable 7', 'variable7_nodeid': 'ns=2;i=15', 'run_start_nodeid': 'ns=2;i=9'}
         default_parser['PLOT_COLORS'] = {'ph_color': '#1f77b4', 'ph_setpoint_color': '#aec7e8', 'do_color': '#ff7f0e', 'do_setpoint_color': '#ffbb78', 'temp_color': '#d62728', 'temp_setpoint_color': '#ff9896', 'variable1_color': '#2ca02c', 'variable2_color': '#98df8a', 'variable3_color': '#9467bd', 'variable4_color': '#c5b0d5', 'variable5_color': '#8c564b', 'variable6_color': '#c49c94', 'variable7_color': '#e377c2'}
         default_parser['AXIS_LIMITS'] = {'ph_ymin': '6', 'ph_ymax': '8', 'do_ymin': '0', 'do_ymax': '100', 'temp_ymin': '20', 'temp_ymax': '40', 'variable_ymin': '0', 'variable_ymax': '50'}
         default_parser['UI_STATE'] = {'variable1': 'false', 'variable2': 'false', 'variable3': 'false', 'variable4': 'false', 'variable5': 'false', 'variable6': 'false', 'variable7': 'false'}
@@ -98,11 +85,28 @@ class DatabaseManager:
     def __init__(self, db_path):
         self.db_path = db_path; self.conn = sqlite3.connect(self.db_path, check_same_thread=False); self.conn.execute("PRAGMA journal_mode=WAL;"); self._create_table(); log_event(f"INFO: Database connection established for '{self.db_path}'.")
     def _create_table(self):
-        cursor = self.conn.cursor(); cursor.execute("""CREATE TABLE IF NOT EXISTS sensordata (timestamp REAL PRIMARY KEY, bioreactor_runtime REAL, ph REAL, ph_setpoint REAL, do REAL, do_setpoint REAL, temperature REAL, temp_setpoint REAL, variable1 REAL, variable2 REAL, variable3 REAL, variable4 REAL, variable5 REAL, variable6 REAL, variable7 REAL, bioreactor_status TEXT)"""); self.conn.commit()
-    def insert_data(self, data_dict):
+        cursor = self.conn.cursor(); cursor.execute("""CREATE TABLE IF NOT EXISTS sensordata (timestamp REAL PRIMARY KEY, ph REAL, ph_setpoint REAL, do REAL, do_setpoint REAL, temperature REAL, temp_setpoint REAL, variable1 REAL, variable2 REAL, variable3 REAL, variable4 REAL, variable5 REAL, variable6 REAL, variable7 REAL, bioreactor_status TEXT)"""); self.conn.commit()
+    
+    def insert_bulk_data(self, data_list):
+        """ **NEW** Inserts a list of data dictionaries in a single transaction. """
+        if not data_list:
+            return
         try:
-            cursor = self.conn.cursor(); keys = sorted(data_dict.keys()); values = [data_dict.get(k) for k in keys]; placeholders = ', '.join(['?'] * len(keys)); cursor.execute(f"INSERT INTO sensordata ({', '.join(keys)}) VALUES ({placeholders})", values); self.conn.commit()
-        except Exception as e: log_event(f"ERROR: Database insert failed in '{self.db_path}': {e}")
+            cursor = self.conn.cursor()
+            # Assume all dicts have the same keys, get them from the first item
+            keys = sorted(data_list[0].keys())
+            placeholders = f"({', '.join(['?'] * len(keys))})"
+            
+            # Convert list of dicts to list of tuples
+            rows_to_insert = [[row.get(k) for k in keys] for row in data_list]
+            
+            sql = f"INSERT OR IGNORE INTO sensordata ({', '.join(keys)}) VALUES {placeholders}"
+            cursor.executemany(sql, rows_to_insert)
+            self.conn.commit()
+            log_event(f"INFO: Flushed {len(rows_to_insert)} records to '{self.db_path}'.")
+        except Exception as e:
+            log_event(f"ERROR: Database bulk insert failed in '{self.db_path}': {e}")
+
     def get_all_data_as_dataframe(self):
         try:
             query = "SELECT * FROM sensordata ORDER BY timestamp ASC"; df = pd.read_sql_query(query, self.conn); return df
@@ -125,32 +129,59 @@ class DatabaseManager:
 class OpcClientThread(QThread):
     data_received = Signal(dict); status_changed = Signal(str); reactor_started = Signal(float)
     def __init__(self, config, db_path):
-        super().__init__(); self.config = config; self.db_path = db_path; self.running = False; self.reactor_start_time = None
+        super().__init__(); self.config = config; self.db_path = db_path; self.running = False; self.reactor_start_time = None; self.data_cache = []
+    
     def run(self):
         self.db_manager = DatabaseManager(self.db_path)
-        self.running = True; address = self.config['OPC_SERVER']['address']; tags_config = self.config['TAGS']; poll_interval_s = int(self.config['SETTINGS']['polling_interval_ms']) / 1000.0
+        self.running = True; is_connected = False; client = None
+        
+        # --- Caching Timer ---
+        self.db_timer = QTimer()
+        self.db_timer.setInterval(30000) # 30 seconds
+        self.db_timer.timeout.connect(self._flush_cache_to_db)
+        
+        address = self.config['OPC_SERVER']['address']; tags_config = self.config['TAGS']
+        try: poll_ms = self.config.getint('SETTINGS', 'polling_interval_ms')
+        except (ValueError, configparser.NoOptionError): poll_ms = 1000; log_event(f"WARNING: Invalid 'polling_interval_ms' in config. Using default {poll_ms}ms.")
+        poll_interval_s = poll_ms / 1000.0
         node_ids_to_poll = {name.replace('_nodeid', '').replace('_name', ''): nid for name, nid in tags_config.items() if nid and name.endswith('_nodeid')}
+        
         try:
-            client = Client(address); client.connect(); self.status_changed.emit(f"Connected to {address}"); log_event(f"OPC-UA: Successfully connected to {address}."); nodes = {name: client.get_node(nid) for name, nid in node_ids_to_poll.items()}
+            client = Client(address); client.connect(); is_connected = True; self.status_changed.emit(f"Connected to {address}"); log_event(f"OPC-UA: Successfully connected to {address}."); nodes = {name: client.get_node(nid) for name, nid in node_ids_to_poll.items()}
+            self.db_timer.start() # Start the cache flushing timer
+            
             while self.running:
                 data = {'timestamp': time.time()}; status_note = None
                 for name, node in nodes.items():
                     try:
                         if name == 'run_start' and not self.reactor_start_time:
-                            is_running = node.get_value()
-                            if isinstance(is_running, bool) and is_running:
-                                self.reactor_start_time = data['timestamp']; self.reactor_started.emit(self.reactor_start_time); status_note = "STARTED"
-                        elif name == 'run_time':
-                            data['bioreactor_runtime'] = node.get_value()
+                            if node.get_value() == 1: self.reactor_start_time = data['timestamp']; self.reactor_started.emit(self.reactor_start_time); status_note = "STARTED"
                         else: data[name] = node.get_value()
                     except Exception: data[name] = None
                 if status_note: data['bioreactor_status'] = status_note
-                self.data_received.emit(data); self.db_manager.insert_data(data); time.sleep(poll_interval_s)
-        except Exception as e: self.status_changed.emit(f"Error: {e}")
+                self.data_received.emit(data)
+                self.data_cache.append(data) # Add to cache instead of DB
+                time.sleep(poll_interval_s)
+
+        except Exception as e: self.status_changed.emit(f"Connection Failed: {e}"); log_event(f"ERROR: OPC client thread failed. Details: {e}")
         finally:
-            if 'client' in locals() and client: client.disconnect()
+            self.db_timer.stop()
+            self._flush_cache_to_db() # Final flush to save any remaining data
+            if is_connected and client: client.disconnect()
             self.status_changed.emit("Disconnected")
-    def stop(self): self.running = False; self.wait(2000)
+
+    def _flush_cache_to_db(self):
+        """Thread-safe method to write the cache to the database."""
+        if not self.data_cache:
+            return
+        
+        # Make a copy and clear the original immediately to avoid race conditions
+        cache_snapshot = self.data_cache[:]
+        self.data_cache.clear()
+        
+        self.db_manager.insert_bulk_data(cache_snapshot)
+
+    def stop(self): self.running = False
 
 
 # #############################################################################
@@ -161,13 +192,11 @@ class SettingsTab(QWidget):
     """Settings configuration tab."""
     settings_saved = Signal()
     def __init__(self, config_manager):
-        super().__init__(); self.config_manager = config_manager; self.tag_widgets = {}; self.color_buttons = {}; self.axis_widgets = {}; layout = QVBoxLayout(self); self._init_server_settings(layout); self._init_control_nodes(layout); self._init_tag_settings(layout); self._init_axis_settings(layout); self._init_connection_controls(layout); layout.addStretch(1); self.load_settings()
+        super().__init__(); self.config_manager = config_manager; self.tag_widgets = {}; self.color_buttons = {}; self.axis_widgets = {}; layout = QVBoxLayout(self); self._init_server_settings(layout); self._init_tag_settings(layout); self._init_axis_settings(layout); self._init_connection_controls(layout); layout.addStretch(1); self.load_settings()
     def _init_server_settings(self, p):
         gb = QGroupBox("Server & Polling"); l = QGridLayout(); l.addWidget(QLabel("<b>OPC UA Server Address:</b>"), 0, 0); self.opc_address_edit = QLineEdit(); l.addWidget(self.opc_address_edit, 0, 1); l.addWidget(QLabel("<b>Data Polling Interval (ms):</b>"), 1, 0); self.polling_edit = QSpinBox(); self.polling_edit.setRange(100, 60000); l.addWidget(self.polling_edit, 1, 1); gb.setLayout(l); p.addWidget(gb)
-    def _init_control_nodes(self, p):
-        gb = QGroupBox("Control & Status Nodes"); l = QGridLayout(); l.addWidget(QLabel("<b>Run Start Signal Node ID:</b>"), 0, 0); self.run_start_node_edit = QLineEdit(); l.addWidget(self.run_start_node_edit, 0, 1); l.addWidget(QLabel("<b>Bioreactor Run Time Node ID:</b>"), 1, 0); self.run_time_node_edit = QLineEdit(); l.addWidget(self.run_time_node_edit, 1, 1); gb.setLayout(l); p.addWidget(gb)
     def _init_tag_settings(self, p):
-        gb = QGroupBox("Process Variable (PV & SP) Configuration"); l = QGridLayout(); l.addWidget(QLabel("<b>Parameter</b>"), 0, 0); l.addWidget(QLabel("<b>Display Name</b>"), 0, 1); l.addWidget(QLabel("<b>PV Node ID</b>"), 0, 2); l.addWidget(QLabel("<b>SP Node ID</b>"), 0, 3); l.addWidget(QLabel("<b>Color (PV / SP)</b>"), 0, 4); tags = ['ph', 'do', 'temp', 'variable1', 'variable2', 'variable3', 'variable4', 'variable5', 'variable6', 'variable7']
+        gb = QGroupBox("Tag & Color Configuration"); l = QGridLayout(); l.addWidget(QLabel("<b>Parameter</b>"), 0, 0); l.addWidget(QLabel("<b>Display Name</b>"), 0, 1); l.addWidget(QLabel("<b>PV Node ID</b>"), 0, 2); l.addWidget(QLabel("<b>SP Node ID</b>"), 0, 3); l.addWidget(QLabel("<b>Color (PV / SP)</b>"), 0, 4); tags = ['ph', 'do', 'temp', 'variable1', 'variable2', 'variable3', 'variable4', 'variable5', 'variable6', 'variable7']
         for i, t in enumerate(tags): self._create_tag_row(l, t, i + 1)
         gb.setLayout(l); p.addWidget(gb)
     def _create_tag_row(self, l, k, r):
@@ -181,21 +210,26 @@ class SettingsTab(QWidget):
             l.addWidget(QLabel(f"{a.title()}:"), i+1, 0); mn, mx = QDoubleSpinBox(), QDoubleSpinBox(); mn.setRange(-10000, 10000); mx.setRange(-10000, 10000); mn.setDecimals(2); mx.setDecimals(2); l.addWidget(mn, i+1, 1); l.addWidget(mx, i+1, 2); self.axis_widgets[a] = {'min': mn, 'max': mx}
         gb.setLayout(l); p.addWidget(gb)
     def _init_connection_controls(self, p):
-        gb = QGroupBox("Connection Controls"); l = QGridLayout(); sb = QPushButton("Save All Settings"); sb.clicked.connect(self.save_settings); l.addWidget(sb, 0, 0, 1, 3); self.start_button = QPushButton("Start Client"); self.stop_button = QPushButton("Stop Client"); self.stop_button.setEnabled(False); self.status_label = QLabel("Status: Disconnected"); self.status_label.setStyleSheet("font-style: italic;"); l.addWidget(self.start_button, 1, 0); l.addWidget(self.stop_button, 1, 1); l.addWidget(self.status_label, 1, 2); gb.setLayout(l); p.addWidget(gb)
+        gb = QGroupBox("Controls"); l = QGridLayout(); sb = QPushButton("Save All Settings"); sb.clicked.connect(self.save_settings); l.addWidget(sb, 0, 0, 1, 3); self.start_button = QPushButton("Start Client"); self.stop_button = QPushButton("Stop Client"); self.stop_button.setEnabled(False); self.status_label = QLabel("Status: Disconnected"); self.status_label.setStyleSheet("font-style: italic;"); l.addWidget(self.start_button, 1, 0); l.addWidget(self.stop_button, 1, 1); l.addWidget(self.status_label, 1, 2); gb.setLayout(l); p.addWidget(gb)
     def _pick_color(self, k):
         b = self.color_buttons[k]; s = b.styleSheet(); c = "#ffffff";
         if 'background-color' in s: c = s.split(':')[1].strip().rstrip(';')
         color = QColorDialog.getColor(QColor(c), self);
         if color.isValid(): b.setStyleSheet(f"background-color: {color.name()};")
     def load_settings(self):
-        c = self.config_manager.get_config(); self.opc_address_edit.setText(c.get('OPC_SERVER', 'address')); self.polling_edit.setValue(c.getint('SETTINGS', 'polling_interval_ms'))
-        self.run_start_node_edit.setText(c.get('TAGS', 'run_start_nodeid')); self.run_time_node_edit.setText(c.get('TAGS', 'run_time_nodeid'))
+        c = self.config_manager.get_config()
+        self.opc_address_edit.setText(c.get('OPC_SERVER', 'address', fallback=''))
+        try: self.polling_edit.setValue(c.getint('SETTINGS', 'polling_interval_ms'))
+        except (ValueError, configparser.NoOptionError): self.polling_edit.setValue(1000)
         for k, w in self.tag_widgets.items(): w['name'].setText(c.get('TAGS', f'{k}_name', fallback='')); w['pv_node'].setText(c.get('TAGS', f'{k}_nodeid', fallback='')); w['sp_node'].setText(c.get('TAGS', f'{k}_setpoint_nodeid', fallback=''))
         for k, b in self.color_buttons.items(): b.setStyleSheet(f"background-color: {c.get('PLOT_COLORS', f'{k}_color', fallback='#ffffff')};")
-        for k, w in self.axis_widgets.items(): w['min'].setValue(c.getfloat('AXIS_LIMITS', f'{k}_ymin', fallback=0)); w['max'].setValue(c.getfloat('AXIS_LIMITS', f'{k}_ymax', fallback=100))
+        for k, w in self.axis_widgets.items():
+            try: w['min'].setValue(c.getfloat('AXIS_LIMITS', f'{k}_ymin'))
+            except (ValueError, configparser.NoOptionError): w['min'].setValue(0)
+            try: w['max'].setValue(c.getfloat('AXIS_LIMITS', f'{k}_ymax'))
+            except (ValueError, configparser.NoOptionError): w['max'].setValue(100)
     def save_settings(self):
         c = self.config_manager.get_config(); c['OPC_SERVER']['address'] = self.opc_address_edit.text(); c['SETTINGS']['polling_interval_ms'] = str(self.polling_edit.value())
-        c.set('TAGS', 'run_start_nodeid', self.run_start_node_edit.text()); c.set('TAGS', 'run_time_nodeid', self.run_time_node_edit.text())
         for k, w in self.tag_widgets.items(): c.set('TAGS', f'{k}_name', w['name'].text()); c.set('TAGS', f'{k}_nodeid', w['pv_node'].text());
         if w['sp_node'].isEnabled(): c.set('TAGS', f'{k}_setpoint_nodeid', w['sp_node'].text())
         for k, b in self.color_buttons.items():
@@ -203,7 +237,7 @@ class SettingsTab(QWidget):
             if 'background-color' in s: n = s.split(':')[1].strip().rstrip(';')
             c.set('PLOT_COLORS', f'{k}_color', n)
         for k, w in self.axis_widgets.items(): c.set('AXIS_LIMITS', f'{k}_ymin', str(w['min'].value())); c.set('AXIS_LIMITS', f'{k}_ymax', str(w['max'].value()))
-        self.config_manager.save_config(); self.settings_saved.emit(); QMessageBox.information(self, "Success", "Settings saved.\nGo to the Dashboard and click 'Apply Display Names & Colors' to update the plot live.")
+        self.config_manager.save_config(); self.settings_saved.emit(); QMessageBox.information(self, "Success", "Settings saved.\nGo to the Dashboard and use 'Apply Display Names & Colors' to update the plot live.")
     def update_status_label(self, s): self.status_label.setText(f"Status: {s}")
 
 class AboutTab(QWidget):
@@ -214,13 +248,12 @@ class AboutTab(QWidget):
 class DashboardTab(QWidget):
     """Dashboard tab for plotting and data export."""
     def __init__(self, main_window):
-        super().__init__(); self.main_window = main_window; self.config_manager = main_window.config_manager; self.fermentation_start_time = None; self.time_data = []; self.plot_data = {}; self.lines = {}; self.checkboxes = {}; self.view_boxes = {}; self.axes = {}; self.optional_axis_map = {}
+        super().__init__(); self.main_window = main_window; self.config_manager = main_window.config_manager; self.fermentation_start_time = None; self.time_data = []; self.plot_data = {}; self.lines = {}; self.checkboxes = {}; self.view_boxes = {}; self.axes = {}; self.optional_axis_map = {}; self.axis_auto_range_state = {}
         layout = QHBoxLayout(self); self._init_plot(); self._init_controls()
         layout.addWidget(self.plot_widget, 4); layout.addWidget(self.controls_group_box, 1)
         self.update_timer = QTimer(self); self.update_timer.setInterval(500); self.update_timer.timeout.connect(self.redraw_plot); self.update_timer.start()
         self.apply_settings()
         self.load_ui_state()
-
     def _init_plot(self):
         pg.setConfigOptions(antialias=True); self.plot_widget = pg.PlotWidget(); self.legend = self.plot_widget.addLegend(offset=(10, 30)); self.p1 = self.plot_widget.getPlotItem(); self.p1.setLabels(left='pH', bottom='Elapsed Fermentation Time (hours)'); self.p1.showAxis('top'); self.p1.getAxis('top').setStyle(showValues=False); self.p1.getAxis('top').setHeight(150)
         self.p_temp = pg.ViewBox(); self.ax_temp = pg.AxisItem('right'); self.p1.layout.addItem(self.ax_temp, 2, 3); self.p1.scene().addItem(self.p_temp); self.ax_temp.linkToView(self.p_temp); self.p_temp.setXLink(self.p1)
@@ -231,19 +264,17 @@ class DashboardTab(QWidget):
         self.p1.getViewBox().sigResized.connect(self._update_views)
         self.view_boxes = {'ph': self.p1.getViewBox(), 'temp': self.p_temp, 'do': self.p_do, 'opt1': self.p_opt1, 'opt2': self.p_opt2, 'opt3': self.p_opt3}
         self.axes = {'ph': self.p1.getAxis('left'), 'temp': self.ax_temp, 'do': self.ax_do, 'opt1': self.ax_opt1, 'opt2': self.ax_opt2, 'opt3': self.ax_opt3}
+        for key in self.view_boxes.keys(): self.axis_auto_range_state[key] = False
         for i in range(1, 4): self.axes[f'opt{i}'].hide()
-
     def _init_controls(self):
         self.controls_group_box = QGroupBox("Plot Controls & Export"); controls_layout = QVBoxLayout()
         checkbox_group = QGroupBox("Optional Variables (Max 3)"); checkbox_layout = QGridLayout()
         self.optional_variable_keys = [f'variable{i}' for i in range(1, 8)]
         for i, key in enumerate(self.optional_variable_keys):
-            checkbox_layout.addWidget(QLabel(key.replace('_', ' ').title()), i, 0)
-            pv_checkbox = QCheckBox(); pv_checkbox.stateChanged.connect(self._on_checkbox_state_changed); self.checkboxes[key] = pv_checkbox; checkbox_layout.addWidget(pv_checkbox, i, 1, Qt.AlignCenter)
+            checkbox_layout.addWidget(QLabel(key.replace('_', ' ').title()), i, 0); pv_checkbox = QCheckBox(); pv_checkbox.stateChanged.connect(self._on_checkbox_state_changed); self.checkboxes[key] = pv_checkbox; checkbox_layout.addWidget(pv_checkbox, i, 1, Qt.AlignCenter)
         checkbox_group.setLayout(checkbox_layout); controls_layout.addWidget(checkbox_group); controls_layout.addStretch(1)
-        apply_style_btn = QPushButton("Apply Display Names & Colors"); apply_style_btn.clicked.connect(self.apply_settings); apply_axes_btn = QPushButton("Apply Manual Axis Limits"); apply_axes_btn.clicked.connect(self._apply_axis_limits); reset_axes_btn = QPushButton("Reset Axes to Auto"); reset_axes_btn.clicked.connect(self._update_axes_autoranges); load_db_btn = QPushButton("Load & Visualize Database"); load_db_btn.clicked.connect(self.main_window.load_and_visualize_db); save_img_btn = QPushButton("Save Graph as Image"); save_img_btn.clicked.connect(self.save_graph_image); export_btn = QPushButton("Export Data..."); export_btn.clicked.connect(self.show_export_dialog)
+        apply_style_btn = QPushButton("Apply Display Names & Colors"); apply_style_btn.clicked.connect(self.apply_settings); apply_axes_btn = QPushButton("Apply Manual Axis Limits"); apply_axes_btn.clicked.connect(self._apply_axis_limits); reset_axes_btn = QPushButton("Enable Auto-Ranging"); reset_axes_btn.clicked.connect(self._enable_auto_range_all); load_db_btn = QPushButton("Load & Visualize Database"); load_db_btn.clicked.connect(self.main_window.load_and_visualize_db); save_img_btn = QPushButton("Save Graph as Image"); save_img_btn.clicked.connect(self.save_graph_image); export_btn = QPushButton("Export Data..."); export_btn.clicked.connect(self.show_export_dialog)
         controls_layout.addWidget(apply_style_btn); controls_layout.addWidget(apply_axes_btn); controls_layout.addWidget(reset_axes_btn); controls_layout.addWidget(load_db_btn); controls_layout.addWidget(save_img_btn); controls_layout.addWidget(export_btn); self.controls_group_box.setLayout(controls_layout)
-
     def _on_checkbox_state_changed(self):
         checked_optionals = [key for key in self.optional_variable_keys if self.checkboxes.get(key) and self.checkboxes[key].isChecked()]
         if len(checked_optionals) > 3:
@@ -251,23 +282,24 @@ class DashboardTab(QWidget):
             if sender: sender.blockSignals(True); sender.setChecked(False); sender.blockSignals(False)
             return
         self.update_optional_plots()
-
     def _update_views(self):
         for vb_key in ['temp', 'do', 'opt1', 'opt2', 'opt3']: self.view_boxes[vb_key].setGeometry(self.p1.getViewBox().sceneBoundingRect())
-
     def apply_settings(self):
-        log_event("GUI: Applying display names and colors to plot."); self.legend.clear(); config = self.config_manager.get_config(); colors = config['PLOT_COLORS']; tags = config['TAGS']
+        log_event("GUI: Applying display names and colors to plot."); self._clear_plot_items(); config = self.config_manager.get_config(); colors = config['PLOT_COLORS']; tags = config['TAGS']
         self.axes['ph'].setLabel(tags.get('ph_name'), color=colors.get('ph_color')); self.axes['temp'].setLabel(tags.get('temp_name'), color=colors.get('temp_color')); self.axes['do'].setLabel(tags.get('do_name'), color=colors.get('do_color'))
         for key in ['ph', 'temp', 'do']: self._create_or_update_line(key, tags.get(f'{key}_name'), colors.get(f'{key}_color'), key, False); self._create_or_update_line(f'{key}_setpoint', f"{tags.get(f'{key}_name')} SP", colors.get(f'{key}_setpoint_color'), key, True)
         for key in self.optional_variable_keys: self._create_or_update_line(key, tags.get(f'{key}_name'), colors.get(f'{key}_color'), None, False)
         self.update_optional_plots()
-
+        self._apply_axis_limits()
+    def _clear_plot_items(self):
+        for line in self.lines.values():
+            for view_box in self.view_boxes.values():
+                if line in view_box.addedItems: view_box.removeItem(line)
+        self.legend.clear(); self.lines.clear()
     def _create_or_update_line(self, key, name, color, axis_key, is_setpoint):
         pen = pg.mkPen(color, width=2, style=Qt.DashLine if is_setpoint else Qt.SolidLine)
-        if key not in self.lines: self.plot_data.setdefault(key, []); new_line = pg.PlotDataItem(pen=pen, name=name); self.lines[key] = new_line
-        else: self.lines[key].setPen(pen); self.lines[key].opts['name'] = name
+        self.plot_data.setdefault(key, []); new_line = pg.PlotDataItem(pen=pen, name=name); self.lines[key] = new_line
         if axis_key: self.view_boxes[axis_key].addItem(self.lines[key])
-        
     def update_optional_plots(self):
         config = self.config_manager.get_config(); tags = config['TAGS']; colors = config['PLOT_COLORS']
         for key in self.optional_variable_keys:
@@ -281,41 +313,44 @@ class DashboardTab(QWidget):
             axis_key = f'opt{i+1}'; view_box = self.view_boxes[axis_key]; axis_item = self.axes[axis_key]; line_item = self.lines[key]; color = colors.get(f'{key}_color', '#FFFFFF')
             view_box.addItem(line_item); line_item.show(); axis_item.setLabel(tags.get(f'{key}_name'), color=color); axis_item.show()
         self._update_axes_autoranges()
-
     def _apply_axis_limits(self):
-        config = self.config_manager.get_config(); limits = config['AXIS_LIMITS']
-        self.axes['ph'].setRange(float(limits['ph_ymin']), float(limits['ph_ymax'])); self.axes['temp'].setRange(float(limits['temp_ymin']), float(limits['temp_ymax'])); self.axes['do'].setRange(float(limits['do_ymin']), float(limits['do_ymax']))
-        for i in range(1, 4): 
-            if self.axes[f'opt{i}'].isVisible(): self.axes[f'opt{i}'].setRange(float(limits['variable_ymin']), float(limits['variable_ymax']))
-        log_event("GUI: Manual axis limits applied.")
-    
+        config = self.config_manager.get_config(); limits = config['AXIS_LIMITS']; log_event("GUI: Manual axis limits applied.")
+        for key, axis in self.axes.items():
+            self.axis_auto_range_state[key.rstrip('123')] = False
+            try:
+                if key.startswith('opt'): lim_key = 'variable'
+                else: lim_key = key
+                vmin = float(limits.get(f'{lim_key}_ymin')); vmax = float(limits.get(f'{lim_key}_ymax')); axis.setRange(vmin, vmax)
+            except (ValueError, TypeError, AttributeError): log_event(f"WARNING: Invalid axis limits for '{key}' in config.")
+    def _enable_auto_range_all(self):
+        log_event("GUI: All axes set to auto-range mode.")
+        for key, view_box in self.view_boxes.items(): self.axis_auto_range_state[key] = True
+        self._update_axes_autoranges()
     def _update_axes_autoranges(self):
-        for view_box in self.view_boxes.values():
+        for key, view_box in self.view_boxes.items():
             if any(isinstance(item, pg.PlotDataItem) and item.isVisible() for item in view_box.allChildren()): view_box.enableAutoRange()
         log_event("GUI: Axes autorange updated.")
-        
     def clear_all_data(self):
         self.time_data.clear();
         for key in self.plot_data: self.plot_data[key].clear()
         self.fermentation_start_time = None
         if hasattr(self, 'start_line_item'): self.p1.removeItem(self.start_line_item); del self.start_line_item
         self.redraw_plot(); log_event("GUI: All plot data cleared.")
-    
     def display_historical_data(self, df):
         self.clear_all_data(); start_events = df[df['bioreactor_status'] == 'STARTED']
         if not start_events.empty: self.set_fermentation_start(start_events['timestamp'].iloc[0])
         self.time_data = df['timestamp'].tolist()
         for key in self.plot_data:
             if key in df.columns: self.plot_data[key] = df[key].tolist()
-        self.redraw_plot(); self._update_axes_autoranges()
-
+        self.redraw_plot(); self._enable_auto_range_all()
     def set_fermentation_start(self, timestamp):
         if self.fermentation_start_time is None: self.fermentation_start_time = timestamp; self.start_line_item = pg.InfiniteLine(pos=0, angle=90, movable=False, pen=pg.mkPen('red', width=3, style=Qt.DotLine), label="EFT Start"); self.p1.addItem(self.start_line_item); self.redraw_plot()
-
     def update_plot_data(self, data):
         self.time_data.append(data.get('timestamp'))
-        for key in self.plot_data: self.plot_data[key].append(data.get(key, None))
-    
+        for key in self.plot_data: self.plot_data[key].append(self._sanitize_value(data.get(key, None)))
+    def _sanitize_value(self, value):
+        if isinstance(value, (int, float)): return value
+        return None
     def redraw_plot(self):
         if not self.time_data:
             for line in self.lines.values(): line.clear()
@@ -324,26 +359,28 @@ class DashboardTab(QWidget):
         eft_data_hours = [(t - start_time) / 3600.0 for t in self.time_data]
         for key, line in self.lines.items():
             if line.isVisible():
-                if len(self.plot_data.get(key, [])) == len(eft_data_hours): line.setData(eft_data_hours, self.plot_data[key])
-                
+                if len(self.plot_data.get(key, [])) == len(eft_data_hours):
+                    try: line.setData(eft_data_hours, self.plot_data[key])
+                    except Exception as e: log_event(f"ERROR: Failed to update plot for key '{key}'. Details: {e}")
+        for axis_key, is_auto in self.axis_auto_range_state.items():
+            if is_auto:
+                view_box = self.view_boxes.get(axis_key)
+                if view_box and any(isinstance(item, pg.PlotDataItem) and item.isVisible() for item in view_box.allChildren()): view_box.enableAutoRange()
     def save_graph_image(self):
         path, _ = QFileDialog.getSaveFileName(self, "Save Graph", "", "PNG (*.png);;JPG (*.jpg)");
         if path: exporter = pg.exporters.ImageExporter(self.plot_widget.plotItem); exporter.export(path); log_event(f"GUI: Graph saved to {path}")
-
     def show_export_dialog(self):
         dialog = ExportDialog(self)
         if dialog.exec():
             start_ts, end_ts, interval = dialog.get_values()
             path, _ = QFileDialog.getSaveFileName(self, "Save Exported Data", "", "Excel Files (*.xlsx)")
             if path: db_manager = DatabaseManager(self.main_window.current_db_path); success, msg = db_manager.export_to_excel(path, start_ts, end_ts, interval, self.config_manager.get_config()); QMessageBox.information(self, "Export Status", msg)
-
     def save_ui_state(self):
         config = self.config_manager.get_config()
         if not config.has_section('UI_STATE'): config.add_section('UI_STATE')
         for key in self.optional_variable_keys:
             if key in self.checkboxes: config.set('UI_STATE', key, str(self.checkboxes[key].isChecked()).lower())
         self.config_manager.save_config()
-
     def load_ui_state(self):
         config = self.config_manager.get_config()
         if not config.has_section('UI_STATE'): return
@@ -368,7 +405,7 @@ class MainWindow(QMainWindow):
     """The main application window containing the tabbed interface."""
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("BIOne Advanced OPC Data Logger - v7.4 Final")
+        self.setWindowTitle("BIOne Advanced OPC Data Logger - v7.6 Final")
         self.setGeometry(100, 100, 1800, 950)
         log_event("INFO: Application started.")
         self.config_manager = ConfigManager()
@@ -387,22 +424,30 @@ class MainWindow(QMainWindow):
 
     def start_opc_client(self):
         if self.opc_thread and self.opc_thread.isRunning(): return
-        self.initial_connection_notified = False
-        self.dashboard_tab.clear_all_data()
-        self.config_manager.get_config()
-        self.dashboard_tab.apply_settings()
+        self.initial_connection_notified = False; self.dashboard_tab.clear_all_data(); self.config_manager.get_config(); self.dashboard_tab.apply_settings()
         self.opc_thread = OpcClientThread(self.config_manager.config, self.current_db_path)
         self.opc_thread.data_received.connect(self.dashboard_tab.update_plot_data); self.opc_thread.status_changed.connect(self.settings_tab.update_status_label); self.opc_thread.status_changed.connect(self.handle_connection_status); self.opc_thread.reactor_started.connect(self.dashboard_tab.set_fermentation_start)
+        self.opc_thread.finished.connect(self.on_thread_finished)
         self.opc_thread.start()
         self.settings_tab.start_button.setEnabled(False); self.settings_tab.stop_button.setEnabled(True)
 
     def stop_opc_client(self):
-        if self.opc_thread and self.opc_thread.isRunning(): self.opc_thread.stop(); self.settings_tab.start_button.setEnabled(True); self.settings_tab.stop_button.setEnabled(False)
+        """Tells the thread to stop without blocking the GUI."""
+        if self.opc_thread and self.opc_thread.isRunning():
+            log_event("INFO: Stop client requested by user.")
+            self.opc_thread.stop()
+
+    def on_thread_finished(self):
+        """**FAIL-SAFE UI RESET** - Called when thread terminates for any reason."""
+        log_event("INFO: OPC client thread has finished.")
+        self.settings_tab.start_button.setEnabled(True)
+        self.settings_tab.stop_button.setEnabled(False)
+        self.opc_thread = None
 
     def handle_connection_status(self, status):
         if not self.initial_connection_notified:
             if status.startswith("Connected"): QMessageBox.information(self, "Connection Success", "Successfully connected to the OPC UA server."); self.initial_connection_notified = True
-            elif status.startswith("Error"): QMessageBox.critical(self, "Connection Failed", f"Could not connect to the OPC UA server.\n\nDetails: {status}"); self.initial_connection_notified = True
+            elif status.startswith("Connection Failed"): QMessageBox.critical(self, "Connection Failed", f"Could not connect to the OPC UA server.\n\nDetails: {status}"); self.initial_connection_notified = True
 
     def load_and_visualize_db(self):
         self.stop_opc_client()
@@ -427,7 +472,7 @@ class MainWindow(QMainWindow):
 # #############################################################################
 
 if __name__ == '__main__':
-    log_event("=================== APPLICATION LAUNCH v7.4 ===================")
+    log_event("=================== APPLICATION LAUNCH v7.6 ===================")
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
